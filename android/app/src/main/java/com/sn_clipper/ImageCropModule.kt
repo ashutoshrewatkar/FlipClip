@@ -1,0 +1,520 @@
+package com.sn_clipper
+
+import com.facebook.react.bridge.ReactApplicationContext
+import com.facebook.react.bridge.ReactContextBaseJavaModule
+import com.facebook.react.bridge.ReactMethod
+import com.facebook.react.bridge.Promise
+import com.facebook.react.bridge.Arguments
+import android.graphics.BitmapRegionDecoder
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Rect
+import android.graphics.RectF
+import com.facebook.react.bridge.ReadableArray
+import java.io.FileOutputStream
+import java.io.File
+import java.util.concurrent.TimeUnit
+
+import android.content.Intent
+import android.content.ComponentName
+import android.net.Uri
+import android.webkit.MimeTypeMap
+import android.os.StrictMode
+
+class ImageCropModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaModule(reactContext) {
+    override fun getName(): String {
+        return "ImageCropModule"
+    }
+
+    @ReactMethod
+    fun openFileDirectly(filePath: String, page: Int, promise: Promise) {
+        try {
+            val cleanPath = if (filePath.startsWith("file://")) filePath.substring(7) else filePath
+            val file = File(cleanPath)
+            if (!file.exists()) {
+                promise.reject("FILE_NOT_FOUND", "File does not exist: $cleanPath")
+                return
+            }
+
+            // Bypass StrictMode file:// URI exposure check (we launch the first-party reader).
+            StrictMode.setVmPolicy(StrictMode.VmPolicy.Builder().build())
+
+            val ext = file.extension.lowercase()
+            val isNote = ext == "note" || ext == "not"
+            val mimeType = when (ext) {
+                "pdf" -> "application/pdf"
+                "epub" -> "application/epub+zip"
+                "txt" -> "text/plain"
+                else -> if (isNote) "*/*" else (MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: "*/*")
+            }
+
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(Uri.fromFile(file), mimeType)
+                // DocumentActivity / NoteInsidePagesActivity are launchMode=singleTask, so a
+                // plain NEW_TASK + CLEAR_TOP launch reuses the live instance via onNewIntent, which re-runs
+                // the reader's processIntent() and seeks to `page`.
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+
+                putExtra("file_path", file.absolutePath)
+                putExtra("filePath", file.absolutePath)
+                putExtra("page", page)
+                putExtra("pageNum", page)
+                putExtra("pageNumber", page)
+                putExtra("jumpPage", page)
+
+                // Set the component explicitly to bypass the app chooser.
+                component = if (isNote) {
+                    ComponentName("com.ratta.supernote.note", "com.ratta.supernote.note.view.NoteInsidePagesActivity")
+                } else {
+                    ComponentName("com.supernote.document", "com.supernote.document.document.DocumentActivity")
+                }
+            }
+
+            reactApplicationContext.startActivity(intent)
+            promise.resolve(true)
+        } catch (e: Exception) {
+            promise.reject("ERROR", e.message, e)
+        }
+    }
+
+    /**
+     * Flattens several PNGs into one, drawn in the order given (first = bottom).
+     *
+     * Used for note pages with more than one content layer: the host renders one layer at a
+     * time (generateLayerPreviewImage takes a single layer index), so a multi-layer page has
+     * to be reassembled here. The layer PNGs come back with a fully transparent background
+     * and opaque ink — verified on-device: alpha is 0 everywhere except the strokes — so a
+     * plain source-over draw is the correct blend and no colour keying is needed.
+     *
+     * The output keeps its alpha, matching what a single-layer render produces, so the crop
+     * and insert paths downstream see exactly the shape of image they already handled.
+     * Resolves false when nothing could be decoded, so the caller can fall back.
+     */
+    @ReactMethod
+    fun compositeImages(paths: ReadableArray, destPath: String, promise: Promise) {
+        var canvasBitmap: Bitmap? = null
+        try {
+            val cleanDestPath = if (destPath.startsWith("file://")) destPath.substring(7) else destPath
+
+            // Size the canvas to the largest layer rather than assuming they all match.
+            var maxWidth = 0
+            var maxHeight = 0
+            val cleanPaths = ArrayList<String>()
+            for (i in 0 until paths.size()) {
+                val raw = paths.getString(i) ?: continue
+                val clean = if (raw.startsWith("file://")) raw.substring(7) else raw
+                if (!File(clean).exists()) continue
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeFile(clean, bounds)
+                if (bounds.outWidth <= 0 || bounds.outHeight <= 0) continue
+                maxWidth = Math.max(maxWidth, bounds.outWidth)
+                maxHeight = Math.max(maxHeight, bounds.outHeight)
+                cleanPaths.add(clean)
+            }
+
+            if (cleanPaths.isEmpty() || maxWidth <= 0 || maxHeight <= 0) {
+                promise.resolve(false)
+                return
+            }
+
+            canvasBitmap = Bitmap.createBitmap(maxWidth, maxHeight, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(canvasBitmap)
+            var drawn = 0
+            for (clean in cleanPaths) {
+                val layer = BitmapFactory.decodeFile(clean) ?: continue
+                canvas.drawBitmap(layer, 0f, 0f, null)
+                layer.recycle()
+                drawn++
+            }
+
+            if (drawn == 0) {
+                promise.resolve(false)
+                return
+            }
+
+            val destFile = File(cleanDestPath)
+            destFile.parentFile?.mkdirs()
+            FileOutputStream(destFile).use { out ->
+                canvasBitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+                out.flush()
+            }
+
+            promise.resolve(true)
+        } catch (e: Exception) {
+            promise.reject("COMPOSITE_FAILED", e.message, e)
+        } finally {
+            canvasBitmap?.recycle()
+        }
+    }
+
+    // Raw pixel dimensions of an image, decoded the same way cropImage decodes it. Used by the
+    // image-crop path so the crop rect maps in the exact coordinate space the crop uses (RN's
+    // Image.getSize can report density-scaled values, which would shrink the selection to the
+    // upper-left corner).
+    @ReactMethod
+    fun getImageSize(sourcePath: String, promise: Promise) {
+        try {
+            val clean = if (sourcePath.startsWith("file://")) sourcePath.substring(7) else sourcePath
+            val f = File(clean)
+            if (!f.exists()) {
+                promise.reject("FILE_NOT_FOUND", "File does not exist: $clean")
+                return
+            }
+            val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(clean, opts)
+            if (opts.outWidth <= 0 || opts.outHeight <= 0) {
+                promise.reject("INVALID_IMAGE", "Invalid image dimensions")
+                return
+            }
+            val map = Arguments.createMap()
+            map.putInt("width", opts.outWidth)
+            map.putInt("height", opts.outHeight)
+            promise.resolve(map)
+        } catch (e: Exception) {
+            promise.reject("ERROR", e.message, e)
+        }
+    }
+
+    /**
+     * Erase/mask tool: paint opaque white rectangles over the source image and save the result.
+     * This is the pre-insert substitute for the firmware limit that a picture pasted into a note
+     * cannot be erased — the user whites-out parts of the clip here, while it is still an ordinary
+     * PNG, before it ever becomes a note picture. `rects` is an array of {x,y,width,height} in the
+     * image's own pixel space (same space getImageSize / cropImage report). White matches the
+     * note paper, so a masked region reads as blank.
+     */
+    @ReactMethod
+    fun maskRectangles(sourcePath: String, rects: ReadableArray, destPath: String, promise: Promise) {
+        var working: Bitmap? = null
+        try {
+            val cleanSource = if (sourcePath.startsWith("file://")) sourcePath.substring(7) else sourcePath
+            val cleanDest = if (destPath.startsWith("file://")) destPath.substring(7) else destPath
+            val src = File(cleanSource)
+            if (!src.exists()) {
+                promise.reject("FILE_NOT_FOUND", "Source file does not exist: $cleanSource")
+                return
+            }
+
+            // Decode to a mutable copy so we can paint onto it. ARGB_8888 keeps alpha for note clips.
+            val decoded = BitmapFactory.decodeFile(cleanSource)
+                ?: run { promise.reject("DECODE_FAILED", "Could not decode image"); return }
+            working = if (decoded.isMutable) decoded else decoded.copy(Bitmap.Config.ARGB_8888, true)
+            if (working !== decoded) decoded.recycle()
+
+            val canvas = Canvas(working)
+            val paint = Paint().apply { color = Color.WHITE; style = Paint.Style.FILL; isAntiAlias = false }
+            val w = working.width
+            val h = working.height
+            for (i in 0 until rects.size()) {
+                val r = rects.getMap(i) ?: continue
+                val rx = r.getInt("x").toFloat()
+                val ry = r.getInt("y").toFloat()
+                val rw = r.getInt("width").toFloat()
+                val rh = r.getInt("height").toFloat()
+                val left = rx.coerceIn(0f, w.toFloat())
+                val top = ry.coerceIn(0f, h.toFloat())
+                val right = (rx + rw).coerceIn(0f, w.toFloat())
+                val bottom = (ry + rh).coerceIn(0f, h.toFloat())
+                if (right > left && bottom > top) {
+                    canvas.drawRect(RectF(left, top, right, bottom), paint)
+                }
+            }
+
+            val destFile = File(cleanDest)
+            destFile.parentFile?.mkdirs()
+            FileOutputStream(destFile).use { out ->
+                working.compress(Bitmap.CompressFormat.PNG, 100, out)
+                out.flush()
+            }
+            promise.resolve(true)
+        } catch (e: Exception) {
+            promise.reject("MASK_FAILED", e.message, e)
+        } finally {
+            working?.recycle()
+        }
+    }
+
+    @ReactMethod
+    fun cropImage(sourcePath: String, x: Int, y: Int, width: Int, height: Int, destPath: String, promise: Promise) {
+        try {
+            val cleanSourcePath = if (sourcePath.startsWith("file://")) sourcePath.substring(7) else sourcePath
+            val cleanDestPath = if (destPath.startsWith("file://")) destPath.substring(7) else destPath
+
+            val file = File(cleanSourcePath)
+            if (!file.exists()) {
+                promise.reject("FILE_NOT_FOUND", "Source file does not exist: $cleanSourcePath")
+                return
+            }
+
+            // Decode dimensions first to clamp coordinates
+            val options = BitmapFactory.Options().apply {
+                inJustDecodeBounds = true
+            }
+            BitmapFactory.decodeFile(cleanSourcePath, options)
+            val imgWidth = options.outWidth
+            val imgHeight = options.outHeight
+
+            if (imgWidth <= 0 || imgHeight <= 0) {
+                promise.reject("INVALID_IMAGE", "Invalid image dimensions")
+                return
+            }
+
+            // Clamp coordinates to image dimensions
+            val left = Math.max(0, Math.min(x, imgWidth))
+            val top = Math.max(0, Math.min(y, imgHeight))
+            val right = Math.max(0, Math.min(x + width, imgWidth))
+            val bottom = Math.max(0, Math.min(y + height, imgHeight))
+
+            if (right - left <= 0 || bottom - top <= 0) {
+                promise.reject("INVALID_BOUNDS", "Invalid crop coordinates: left=$left, top=$top, right=$right, bottom=$bottom")
+                return
+            }
+
+            val cropRect = Rect(left, top, right, bottom)
+            
+            // Decode only the region
+            val decoder = BitmapRegionDecoder.newInstance(cleanSourcePath, false)
+            val croppedBitmap = decoder.decodeRegion(cropRect, null)
+            decoder.recycle()
+
+            if (croppedBitmap == null) {
+                promise.reject("CROP_FAILED", "Failed to decode cropped region")
+                return
+            }
+
+            // Automatically trim whitespace/empty margins from the cropped image
+            val trimmedBitmap = trimWhitespace(croppedBitmap)
+            if (trimmedBitmap != croppedBitmap) {
+                croppedBitmap.recycle()
+            }
+
+            // Save cropped bitmap
+            val destFile = File(cleanDestPath)
+            destFile.parentFile?.mkdirs()
+            val out = FileOutputStream(destFile)
+            trimmedBitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+            out.flush()
+            out.close()
+
+            trimmedBitmap.recycle()
+
+            promise.resolve(true)
+        } catch (e: Exception) {
+            promise.reject("ERROR", e.message, e)
+        }
+    }
+
+    private fun trimWhitespace(bmp: Bitmap): Bitmap {
+        val imgHeight = bmp.height
+        val imgWidth = bmp.width
+        var top = 0
+        var left = 0
+        var right = imgWidth - 1
+        var bottom = imgHeight - 1
+
+        fun isWhitespace(color: Int): Boolean {
+            // Fully transparent counts as empty. Note captures come back transparent apart from
+            // their ink (the host renders content layers that way), so without this the very
+            // first row scanned reads as "not white" -- a transparent pixel is (0,0,0,0), which
+            // is indistinguishable from black by RGB alone -- the loop breaks immediately, and
+            // the trim silently does nothing for every note clip while working fine for the
+            // opaque-white doc captures. Partially transparent pixels are left alone: those are
+            // the anti-aliased edges of real strokes.
+            val a = (color ushr 24) and 0xff
+            if (a == 0) return true
+            val r = (color shr 16) and 0xff
+            val g = (color shr 8) and 0xff
+            val b = color and 0xff
+            return r > 245 && g > 245 && b > 245
+        }
+
+        // Scan top rows
+        for (y in 0 until imgHeight) {
+            var rowIsWhite = true
+            for (x in 0 until imgWidth) {
+                if (!isWhitespace(bmp.getPixel(x, y))) {
+                    rowIsWhite = false
+                    break
+                }
+            }
+            if (!rowIsWhite) {
+                top = y
+                break
+            }
+        }
+
+        // Scan bottom rows
+        for (y in imgHeight - 1 downTo top) {
+            var rowIsWhite = true
+            for (x in 0 until imgWidth) {
+                if (!isWhitespace(bmp.getPixel(x, y))) {
+                    rowIsWhite = false
+                    break
+                }
+            }
+            if (!rowIsWhite) {
+                bottom = y
+                break
+            }
+        }
+
+        // Scan left columns
+        for (x in 0 until imgWidth) {
+            var colIsWhite = true
+            for (y in top..bottom) {
+                if (!isWhitespace(bmp.getPixel(x, y))) {
+                    colIsWhite = false
+                    break
+                }
+            }
+            if (!colIsWhite) {
+                left = x
+                break
+            }
+        }
+
+        // Scan right columns
+        for (x in imgWidth - 1 downTo left) {
+            var colIsWhite = true
+            for (y in top..bottom) {
+                if (!isWhitespace(bmp.getPixel(x, y))) {
+                    colIsWhite = false
+                    break
+                }
+            }
+            if (!colIsWhite) {
+                right = x
+                break
+            }
+        }
+
+        val pad = 4
+        val newLeft = Math.max(0, left - pad)
+        val newTop = Math.max(0, top - pad)
+        val newRight = Math.min(imgWidth - 1, right + pad)
+        val newBottom = Math.min(imgHeight - 1, bottom + pad)
+
+        val newWidth = newRight - newLeft + 1
+        val newHeight = newBottom - newTop + 1
+
+        if (newWidth <= 0 || newHeight <= 0 || (newWidth == imgWidth && newHeight == imgHeight)) {
+            return bmp
+        }
+
+        return Bitmap.createBitmap(bmp, newLeft, newTop, newWidth, newHeight)
+    }
+
+    private fun sendEvent(eventName: String, params: String) {
+        try {
+            reactApplicationContext
+                .getJSModule(com.facebook.react.modules.core.DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+                .emit(eventName, params)
+        } catch (e: Exception) {
+            // Ignore if JS context not ready
+        }
+    }
+
+    // Cleared when the module is torn down (e.g. an RN reload) so a stale instance holding
+    // a dead ReactApplicationContext isn't retained or used to emit events.
+    override fun invalidate() {
+        if (foregroundInstance === this) foregroundInstance = null
+        super.invalidate()
+    }
+
+    companion object {
+        // @Volatile: written on the RN bridge thread and read from event emits; volatile
+        // guarantees cross-thread visibility on multi-core hardware.
+        @JvmStatic @Volatile
+        var launchMode: String = "normal"
+
+        @JvmStatic @Volatile
+        var promptText: String = ""
+
+        @JvmStatic @Volatile
+        var foregroundInstance: ImageCropModule? = null
+    }
+
+    @ReactMethod
+    fun registerAsForeground(promise: Promise) {
+        foregroundInstance = this
+        promise.resolve(true)
+    }
+
+    @ReactMethod
+    fun setLaunchMode(mode: String, promise: Promise) {
+        launchMode = mode
+        foregroundInstance?.sendEvent("onLaunchModeChange", mode)
+        promise.resolve(true)
+    }
+
+    @ReactMethod
+    fun getLaunchMode(promise: Promise) {
+        promise.resolve(launchMode)
+    }
+
+    @ReactMethod
+    fun setPromptText(text: String, promise: Promise) {
+        promptText = text
+        promise.resolve(true)
+    }
+
+    @ReactMethod
+    fun getPromptText(promise: Promise) {
+        promise.resolve(promptText)
+    }
+
+    // Capture the current on-screen framebuffer to a PNG and return { path, width,
+    // height }. Works because the plugin host process runs as android.uid.system
+    // (uid 1000), which can read the framebuffer via the platform `screencap`
+    // binary — a normal third-party app cannot. This is the basis of the WYSIWYG
+    // reader-page capture (crisp, at the user's font) used for reflowable EPUBs.
+    @ReactMethod
+    fun captureScreen(destPath: String, promise: Promise) {
+        var p: Process? = null
+        try {
+            val clean = if (destPath.startsWith("file://")) destPath.substring(7) else destPath
+            File(clean).parentFile?.mkdirs()
+            // Passed as a fixed String[] (no shell) so the path is never interpreted —
+            // no command injection. With a FILENAME arg, `screencap` writes the PNG to
+            // that file and produces no stdout, so waitFor() can't block on an undrained
+            // stdout pipe (verified empirically across many captures).
+            p = Runtime.getRuntime().exec(arrayOf("screencap", "-p", clean))
+            // Bound the wait so a hung screencap (low memory, display-driver stalls) can't
+            // block this thread indefinitely; force-kill and fail cleanly on timeout.
+            val finished = p.waitFor(10, TimeUnit.SECONDS)
+            if (!finished) {
+                p.destroyForcibly()
+                promise.reject("SCREENCAP_TIMEOUT", "screencap did not complete within 10s")
+                return
+            }
+            val exit = p.exitValue()
+            val f = File(clean)
+            if (exit == 0 && f.exists() && f.length() > 0L) {
+                val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeFile(clean, o)
+                val map = Arguments.createMap()
+                map.putString("path", clean)
+                map.putInt("width", o.outWidth)
+                map.putInt("height", o.outHeight)
+                promise.resolve(map)
+            } else {
+                val err = try { p.errorStream.bufferedReader().readText() } catch (e: Exception) { "" }
+                promise.reject("SCREENCAP_FAILED", "exit=$exit len=${f.length()} err=$err")
+            }
+        } catch (e: Exception) {
+            promise.reject("SCREENCAP_ERROR", e.message, e)
+        } finally {
+            // Release the process and its stdin/stdout/stderr file descriptors even on the
+            // success path (waitFor alone does not close them).
+            p?.let {
+                try { it.inputStream.close() } catch (_: Exception) {}
+                try { it.outputStream.close() } catch (_: Exception) {}
+                try { it.errorStream.close() } catch (_: Exception) {}
+                try { it.destroy() } catch (_: Exception) {}
+            }
+        }
+    }
+}

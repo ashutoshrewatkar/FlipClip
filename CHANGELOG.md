@@ -1,0 +1,317 @@
+# Clipper Change Log
+
+What changed in each release, from a user's point of view.
+
+*Entries before 0.3.0 are in the older, development-oriented style.*
+
+## [0.3.0] - 2026-09-06
+
+The biggest release so far. Clip regions from your **notes**, not just documents. Inserts flow
+across pages by themselves. Tables of contents are numbered and indented. Plus fixes to note
+capture that were quietly losing content, and clearer, safer behaviour around anything that
+deletes.
+
+**At a glance**
+
+*New:* region capture in notes · Clip Region toolbar button · redesigned e-ink icons ·
+inserts continue onto the next page
+
+*Table of contents:* outline numbering and indenting · a cleaner header · one page, and it
+says so when there are more headings
+
+*Fixed:* ruled lines baked into note captures · layers missing from note captures · auto-trim
+on note clips · clips removed when the insert never landed · a split clip corrupting later
+pieces · "Always Allow" giving worse captures · silent permission failures · Jump-to-Source
+failing without explanation
+
+*Worth knowing:* rebuilding a table of contents replaces the whole page and asks first · a
+rebuild that finds fewer headings asks first · Clear All asks first · missing clip images say
+so · resuming an interrupted insert needs "Remove clips after inserting" on · **update over the
+top, do not uninstall first**
+
+### ✨ New
+
+**Region capture in notes.** Clip a diagram, a sketch or a block of handwriting straight out of
+a `.note` page, the same way you already could from a PDF or EPUB.
+
+**A "Clip Region" button on the toolbar.** Frame and capture a region directly, without going
+through a text selection first.
+
+**Redesigned icons.** The plugin icon and the in-app icons were redrawn for e-ink: high
+contrast, no grey fills, legible at toolbar size.
+
+**Inserts continue onto the next page.** When a batch of clips is too big for the current page,
+Clipper turns to the next existing page and carries on, instead of stopping.
+
+### 📖 Table of contents: now with a limit made explicit
+
+The table of contents itself isn't new (it arrived in 0.1.9), but this release changes how it
+looks and settles how it behaves when it doesn't fit.
+
+**Entries are now numbered and indented by level.** Clipper works out the heading levels from
+the title styles you used, then numbers them as an outline: `1.`, `1.1`, `1.2`, `2.`, and so on,
+with each level indented under its parent. A note that uses a single title style stays a flat
+numbered list, exactly as before. Numbering runs continuously down the page rather than
+restarting.
+
+**A cleaner header.** The rule under the "TABLE OF CONTENTS" heading is gone. It sat close
+enough to the first entry that the two could bleed into each other.
+
+**A table of contents is one page.** If your note has more headings than fit, Clipper writes the
+ones that fit and says so at the bottom: *"Showing first 21 of 24 headings"*. Multi-page is
+built but switched off: writing across a page break can crash the note app on the current
+firmware. It returns once that is fixed. Choosing a smaller **Inserted text size** fits more
+headings on the page.
+
+### 🔧 Fixed
+
+- **Note captures no longer include the page's ruled lines.** The template was being baked into
+  the image behind your ink.
+- **Note captures now include every visible layer.** Anything drawn on a layer other than the
+  main one was silently missing from the clip.
+- **Auto-trim now works on note clips.** Empty margins around a note capture were never being
+  trimmed, so clips came out larger than what you framed.
+- **Clips are no longer removed when their insert didn't actually land.** With "Remove clips
+  after inserting" on, a failed insert could still delete the clip.
+- **A long clip split across a page break no longer corrupts the pieces after it.** In a merged
+  clip, leftover text from one part could bleed into a later part.
+- **Granting broader file access no longer produced worse captures.** Setting Clipper's file
+  permission to "Always Allow" made it fall back to a lower-quality screen capture, so the
+  stricter, more convenient choice quietly gave the worse result.
+- **Jump-to-Source now explains itself when it can't open a file.** Tapping the jump icon used
+  to do nothing at all if the source had been moved or deleted. It now says so, and it also
+  tells you when a file is locked with a password instead of failing silently.
+- **Permission problems now say what is wrong.** Refused reads and writes used to fail with
+  nothing useful on screen; Clipper now tells you which access is missing and how to grant it.
+
+### ⚠️ Things worth knowing
+
+**Rebuilding a table of contents replaces the whole page.** Everything on that page goes,
+including notes or handwriting you added to it. Clipper always asks first, and cancelling leaves
+the page exactly as it was.
+
+**If a rebuild finds fewer headings than last time, Clipper asks before replacing.**
+Handwriting recognition isn't perfectly repeatable, and a shorter table of contents looks
+perfectly normal, so it's your call rather than a silent loss.
+
+**Clear All now asks first.** It deletes every clip and its saved images, and it sits one tap
+away in the bottom bar.
+
+**A clip whose image has gone missing now says so** on the card, instead of showing an empty
+box that looks like a display glitch.
+
+**Resuming an interrupted insert needs "Remove clips after inserting" turned on.** Clipper
+resumes by removing what it already placed, so with that setting off it starts again from the
+beginning and repeats itself. Turn it on before inserting a batch too big for one page.
+
+**Page Full still needs you to add the page.** When a note runs out of pages, Clipper asks you
+to tap `+` in the note toolbar; your remaining clips stay queued.
+
+### ♻️ Updating from an earlier version
+
+**Install the new `.snplg` over the existing plugin, don't uninstall first.**
+
+Updating over the top keeps everything. **Uninstalling deletes your saved clip images**, because
+those files live in the plugin's own folder, which the device removes when a plugin is removed.
+Your text clips and their sources survive either way.
+
+If you do uninstall and reinstall, Clipper notices on the next launch and offers to tidy up the
+clips whose images are gone, or to keep them, if you'd rather.
+
+## [0.2.0] - 2026-08-28 (permission-system upgrade)
+
+### 2026-08-28 — Declare permissions + version bump (plan step 3)
+Files: `PluginConfig.json`, `package.json`
+
+- Added `uses-permissions: ["plugin.permission.FILE:READ", "plugin.permission.FILE:WRITE"]`.
+  Without the declaration every `requestPermission` call fails with 1500. `FILE:DELETE` and
+  `INTERNET` are deliberately NOT declared: every file Clipper deletes is inside its own
+  private dir (exempt) and it makes no network calls.
+- `versionName` 0.1.9 → 0.2.0; `package.json` version kept in sync. `versionCode` left at
+  285 on purpose — `buildPlugin.sh` auto-increments it at build time, so the next build
+  produces 286 (the plan's target). Setting 286 by hand would have shipped 287.
+- `pluginID` (yz6g3rirgcavgon9) and `pluginKey` (SnClipper) untouched.
+- Verified `buildPlugin.sh` copies the root `PluginConfig.json` wholesale into
+  `build/generated/` (`cp "$root_cfg" "$gen_cfg"`), so the new field carries into the package.
+
+### 2026-08-28 — New PermissionService (plan step 4)
+Files: `src/services/PermissionService.ts` (new)
+
+- Check-then-request gate: `hasPermission` → if not 1, `requestPermission(perm, desc)`;
+  0 = blocked, 1/2 = granted, anything else (-1/dismissed) = denied. Never caches a grant —
+  "allow this time only" is revoked when the plugin exits with no callback, so a cached
+  "granted" would resurface as a raw 1503 mid-flow.
+- Added a fourth outcome beyond the plan's three: `unavailable`, returned when
+  `requestPermission` itself throws. That is the expected symptom of the plan's §3.4 unknown
+  (can the host dialog appear from a showType:0 background press?) and lets index.js decide
+  at runtime instead of hard-coding an answer.
+- Degrades safely on a host/SDK without the permission APIs: `isSupported()` false, and a
+  throwing `hasPermission`, both resolve to 'granted' so Clipper keeps working on firmware
+  that does not gate.
+- Error-code mapping for the shared error paths: 1500/1501/1502/1503/1217 →
+  `isPermissionError`/`messageForError`, reading the code from either a thrown APIError or a
+  `{success:false, error:{code}}` response (the SDK returns the latter far more often).
+
+### 2026-08-28 — Gate the background Clip handler (plan step 5)
+Files: `index.js`, `src/services/ClipService.ts`, `src/services/StorageService.ts`, `src/App.tsx`
+
+- Button 300 now ensures `FILE:READ` before `getLastSelectedText()`.
+  - blocked → long toast pointing at Settings → Security & Privacy → Plugins.
+  - denied → short "Clipper needs permission to clip"; next press prompts again.
+  - unavailable → new `'permission'` launch mode: open the plugin view and re-request from the
+    foreground, where a dialog can definitely be shown. This is the plan's §3.4 fallback,
+    wired so it only triggers when the background request actually fails.
+- `App.tsx` handles the `'permission'` launch mode end-to-end: re-request, then finish the
+  clip the user asked for, mirroring index.js's >5-word auto-clip vs. prompt-dialog routing.
+- Defense in depth: a 1503 from `getLastSelectedText` (grant expired mid-session) is reported
+  as a permission problem rather than silently doing nothing.
+- `'permission'` added to the launch-mode unions in ClipService/StorageService.
+
+### 2026-08-28 — Gate the UI flows (plan step 6)
+Files: `src/App.tsx`
+
+- Four gates, all at the user-action level (not per API call), via a shared `ensurePermissions`
+  helper: **Insert into note** (READ+WRITE, asked together so a missing WRITE can't strand a
+  half-written page), **Jump-to-Source** (READ), **Region capture** (READ),
+  **Build ToC** (READ+WRITE).
+- 'blocked' shows the existing ConfirmationDialog (OK-only) with the Settings route — a toast
+  is too easy to miss for a state that will not fix itself; 'denied'/'unavailable' show a
+  retry toast.
+- Defensive 1501/1503/1217 mapping (`reportPermissionError`) added to the insert, jump,
+  capture and ToC error paths. Caveat (found 2026-08-29): the write paths do not yet surface
+  error codes to it — `IndexService` discards `replaceElements`/`deleteElements` results and
+  the image-insert path drops the code from `modifyElements` — so the mapping is effectively
+  unreachable there today. Not a live bug (the up-front gates prevent the scenario); wiring
+  the return-value checks is planned for 0.2.1.
+- Bug fixed while gating: `runInsertClips` claimed its re-entrancy guard after the new `await`,
+  so two quick Insert taps could both slip through and insert twice. Guard is now claimed
+  before the first await (caught by the existing "ignores a second Insert tap" test).
+
+### 2026-08-28 — Build, install, test matrix (plan steps 7–8)
+Files: none (verification); artifact `build/outputs/SnClipper.snplg` at 0.2.0 / versionCode 288
+
+- Verified `build/generated/PluginConfig.json` carries `uses-permissions` through the build, with
+  `pluginID`/`pluginKey` unchanged. Installed on a Manta A5X2 (Chauvet 2488_beta) and ran the
+- **Region capture verdict (plan step 7): KEEP — no feature flag.** `screencap` still works under
+  the new host; "Clip Region" produced a correct WYSIWYG crop of a reflowable EPUB page. Brief
+  rule 5's fallback was not needed.
+- Headline results: background clip prompts in place and clips correctly; insert prompts READ then
+  WRITE and inserts with back-links; Jump-to-Source reopens the source at the right page; "Always
+  Allow" survives a reboot; with everything denied nothing crashes and every gated flow explains
+  itself; clips/settings/images survive with all permissions denied.
+- Not exercised: the ToC *write* path (needs a note with handwritten titles) and the 1501/1503
+  error mapping (no ungated call ever reached the host). Both recorded in the reports.
+
+### 2026-08-29 — ToC write path exercised on device (review item 2)
+Files: none (verification); artifact 0.2.0 / versionCode 290
+
+Run against a real 32-page note with 25 handwritten titles, permissions granted:
+
+- **First build:** produced a correct ToC page (25 entries with page numbers and jump links).
+  API tally from the host log: 53 `insertText`, 25 `insertTextLink`, 9 `recognizeElements`,
+  1 each of `saveCurrentNote` / `getPageSize` / `getNoteTotalPageNum` / `getElements` — and
+  **zero `replaceElements`/`deleteElements`**. A first-time ToC build therefore touches no
+  WRITE-gated API at all, exactly as the decompiled host predicted.
+- **Refresh:** rebuilding over the existing ToC called `replaceElements` (the WRITE-gated call)
+  and regenerated cleanly — same 25 entries, timestamp updated, no duplication or overlap.
+- Page-empty guard behaved correctly throughout: it refused a page holding a title element, and
+  only proceeded once a blank page was added.
+
+**Gap found while verifying — 1501/1503 handling is effectively unreachable as wired.** The SDK
+returns `{success: false, error: {code}}` rather than throwing, but `IndexService`'s ToC-refresh
+block discards the results of `replaceElements`/`deleteElements` and only catches thrown errors,
+and `App.tsx` checks `modifyElements`'s `success` flag while dropping the code. So a real 1501
+would be swallowed silently in both write paths. This is not a live bug — the gates request WRITE
+up front for both ToC and image-insert, so the situation should not arise — but the
+"defense in depth" is not currently in depth. Left as-is and reported rather than changed,
+since wiring return-value checks through those paths is a behavioural change beyond this review.
+
+### 2026-08-29 — Insert asks for FILE:WRITE only when it needs it (review item 1)
+Files: `src/App.tsx`, `src/services/PermissionService.ts`, `CHANGELOG.md`,
+`__tests__/PermissionService.test.ts` (new), `__tests__/App.test.tsx`
+
+Settled by decompiling the host (`jadx` on `/system_ext/app/PluginHost/PluginHost.apk`) and
+reading `HostCommImpl.checkFileWritePermission` rather than guessing from the host's UI wording:
+
+```java
+if (isPluginPrivatePath(api, path) || SecurityManager.hasPermission(pluginID, 2)) return true;
+cb.onResponse(new PluginAPIResponse(PluginAPIError.PERMISSION_NO_REQUEST_WRITE)); // 1501
+```
+
+The rule is: **APIs taking a file path are gated; APIs acting on the currently-open editor are
+not.** Verified per method — `insertText`, `insertTextLink`, `saveCurrentNote`, `reloadFile`,
+`getLastElement`, `getLastSelectedText`, `getCurrentFilePath`, `getCurrentPageNum`,
+`recognizeElements` and `generateCurrentDocImage` carry no check at all; `insertImage` has only
+an encryption check; `getElements`/`getPageSize`/`getTitles`/`getNoteTotalPageNum` are READ;
+`modifyElements`/`replaceElements`/`deleteElements` are WRITE.
+
+- **Insert now requests WRITE only when the batch contains an image clip.** The only WRITE-gated
+  call in the flow is `modifyElements(notePath, …)`, used purely to reposition an image after
+  `insertImage`. A text-only insert was prompting for a permission it never used — and would
+  have refused to run for anyone who denied "Modify Files", losing working functionality.
+- **ToC gate unchanged (READ+WRITE).** A first-time build only inserts (ungated), but a refresh
+  calls `replaceElements`/`deleteElements`; which one applies is unknown until after the scan,
+  so asking up front stays correct.
+- **Plan §6 Q7 answered:** `reloadFile` is not gated at all — neither READ nor WRITE.
+- **Why note region-capture works on READ alone:** `generateNotePng` checks READ on the note path
+  and WRITE on the output PNG path, but the PNG goes to the plugin private dir, which
+  `isPluginPrivatePath` exempts.
+- Corrected the `ERR_BAD_NAME` comment: the host reuses **1502** for both "delete permission not
+  requested" and "permission does not exist".
+- Added `__tests__/PermissionService.test.ts` (20 tests): full `ensure` outcome mapping
+  (held / 1 / 2 / 0 / -1 / throw→`unavailable`), both no-gating fall-throughs, `ensureAll`
+  short-circuiting, and error classification. Renamed a stale `generateDocImage` mock in
+  `App.test.tsx` to `generateCurrentDocImage`. Suite: 102 → **122 passing**.
+- Removed the superseded "[Unreleased] Highlights" planning block (review item 4).
+
+**Confirmed on device** (build 290, Manta A5X2 / Chauvet 2488_beta): with Read Files = Allow and
+**Modify Files = Don't Allow**, a two-clip text insert succeeded — both clips landed with their
+source back-links — and the host log shows a single `hasPermission(FILE:READ)` with no WRITE
+query, no prompt and no blocked dialog. The ToC write path was exercised too (see next entry).
+
+### 2026-08-28 — Device findings applied: Settings path + ToC hint copy
+Files: `src/services/PermissionService.ts`, `index.js`, `src/components/SettingsPopover.tsx`
+
+- Corrected the Settings route in every permission message. The plan (and my first draft) said
+  "Settings → Security & Privacy → Plugins"; the real path, verified on device, is
+  **Settings → Apps → Plugins → Clipper → Permissions**, where the two declared permissions
+  appear as "Read Files" and "Modify Files" with Allow / Ask Every Time / Don't Allow.
+- **Out-of-plan (recorded per brief rule 1):** dropped the stale "Page 1" from the ToC settings
+  hint — now "ToC tab & note generator". The ToC builds on any blank page, not page 1, so the
+  hint has been wrong since the page-empty pre-check landed. Noticed while running the matrix;
+  one-word copy fix, no behaviour change. Also dropped "& Keyword Index" from the stale
+  `src/App.tsx` section comment (that feature was deleted in build 284) — comment only, made
+  after build 288 was cut, so the installed artifact is unaffected.
+
+### 2026-08-28 — sn-plugin-lib 0.1.43 → 0.1.65 (plan step 2)
+Files: `package.json`, `package-lock.json`, `src/App.tsx`, `src/services/IndexService.ts`
+
+- Upgraded `sn-plugin-lib` to 0.1.65 (latest; `npm view` shows 0.1.43 → 0.1.65 with nothing
+  in between). Verified `PluginManager.hasPermission(permission)` and
+  `requestPermission(permission, desc?)` exist in both the source and the shipped type
+  defs (`lib/typescript/src/PluginManager.d.ts:130,144`). Why: 0.1.43 has no permission
+  APIs at all, so nothing else in this plan can be built on it.
+- **Breaking change fixed —** `PluginDocAPI.generateDocImage(docPath, page, pngPath, size)`
+  was removed and replaced by `generateCurrentDocImage(page, pngPath, size, type)`, which
+  always renders the currently-open document. `src/App.tsx` region-crop fallback migrated;
+  passes `type: 0` (plain page — `type: 1` bakes in text-selection highlight/underline) and
+  rounds width/height (the new validator requires integers, range 1–5120). Without this,
+  region capture of a PDF/EPUB would have failed on every fallback render.
+- **Breaking change fixed —** element indices are now 1-based: `deleteElements`'s
+  `numsInPage` and `getElement`'s `num` validate `min: 1` (was `min: 0`), and the `Element`
+  model documents `numInPage` as starting at 1. `IndexService.generateTocPage`'s ToC-refresh
+  path fell back to the 0-based array index when an element had no `numInPage`; that value
+  is now rejected outright. Fallback changed to `i + 1`.
+- Other 0.1.65 changes reviewed, none used by Clipper: `PluginCommAPI.setSlideBarStatus`
+  removed; `resizeLassoRect` gained an optional `rotationDegree`; new `flipLassoElements`,
+  `canHandwrite`, `jumpToPage`, `getPageDisplaySize`, `getPathEncryptionStatus`,
+  `unlockPathWithPassword`, `lockPathAccess`, and `PluginFileAPI.openFile(filePath, page)`.
+  (`openFile` is a possible future replacement for the native `ImageCropModule.openFileDirectly`
+  intent used by Jump-to-Source — not changed here; see session-notes.)
+
+## 0.1.9 (versionCode 285) — baseline as of 2026-08-28
+
+Current release. Text + region clips (PDF/EPUB/TXT/CBZ/FB2 and notes), dashboard with
+search/filter/sort/merge, insert into notes with back-links and auto-split, ToC feature,
+settings; clips persist via AsyncStorage, clip images in the plugin private dir.
+Pre-dates the permission system; region capture relies on host `screencap`.
